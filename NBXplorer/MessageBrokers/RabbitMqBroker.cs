@@ -5,6 +5,7 @@ using System.Text;
 using System.Threading.Tasks;
 using NBXplorer.Models;
 using RabbitMQ.Client;
+using RabbitMQ.Client.Exceptions; // Add this for exception handling
 
 namespace NBXplorer.MessageBrokers
 {
@@ -30,15 +31,39 @@ namespace NBXplorer.MessageBrokers
 
         private void CheckAndOpenConnection()
         {
-            if(Channel == null) 
+            try
             {
-                Connection = ConnectionFactory.CreateConnection();
-                Channel = Connection.CreateModel();
+                if(Channel == null)
+                {
+                    Connection = ConnectionFactory.CreateConnection();
+                    Channel = Connection.CreateModel();
 
-                if(!string.IsNullOrEmpty(NewTransactionExchange)) 
-                    Channel.ExchangeDeclare(NewTransactionExchange, ExchangeType.Topic);
-                if(!string.IsNullOrEmpty(NewBlockExchange)) 
-                    Channel.ExchangeDeclare(NewBlockExchange, ExchangeType.Topic);
+                    if(!string.IsNullOrEmpty(NewTransactionExchange)) 
+                        Channel.ExchangeDeclare(NewTransactionExchange, ExchangeType.Topic);
+                    if(!string.IsNullOrEmpty(NewBlockExchange)) 
+                        Channel.ExchangeDeclare(NewBlockExchange, ExchangeType.Topic);
+                }
+            }
+            catch (BrokerUnreachableException ex)
+            {
+                // Handle the case when the RabbitMQ broker is unreachable
+                Console.Error.WriteLine($"Error: Unable to reach RabbitMQ broker. {ex.Message}");
+                // Optionally, you can rethrow the exception or log it to a logging service
+                throw;
+            }
+            catch (ConnectFailureException ex)
+            {
+                // Handle the case when the connection to RabbitMQ fails
+                Console.Error.WriteLine($"Error: Connection to RabbitMQ failed. {ex.Message}");
+                // Optionally, you can rethrow the exception or log it to a logging service
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // Handle any other exceptions
+                Console.Error.WriteLine($"Error: An unexpected error occurred while connecting to RabbitMQ. {ex.Message}");
+                // Optionally, you can rethrow the exception or log it to a logging service
+                throw;
             }
         }
 
@@ -63,7 +88,7 @@ namespace NBXplorer.MessageBrokers
             var routingKey = $"transactions.{transactionEvent.CryptoCode}.{conf}";
             
             string msgIdHash = HashMessageId($"{transactionEvent.TrackedSource}-{transactionEvent.TransactionData.Transaction.GetHash()}-{(transactionEvent.TransactionData.BlockId?.ToString() ?? string.Empty)}");
-			ValidateMessageId(msgIdHash);
+            ValidateMessageId(msgIdHash);
 
             IBasicProperties props = Channel.CreateBasicProperties();
             props.MessageId = msgIdHash;
@@ -106,21 +131,23 @@ namespace NBXplorer.MessageBrokers
 
         const int MaxMessageIdLength = 128;
         private string HashMessageId(string messageId)
-		{
-			HashAlgorithm algorithm = SHA256.Create();
-			return Encoding.UTF8.GetString( algorithm.ComputeHash(Encoding.UTF8.GetBytes(messageId)));
-		}
+        {
+            using (var algorithm = SHA256.Create())
+            {
+                return BitConverter.ToString(algorithm.ComputeHash(Encoding.UTF8.GetBytes(messageId))).Replace("-", "");
+            }
+        }
 
-		private void ValidateMessageId(string messageId)
-		{
-			if (string.IsNullOrEmpty(messageId) )
-			{
-				throw new ArgumentException("MessageIdIsNullOrEmpty");
-			}
-			else if (messageId.Length > MaxMessageIdLength)
-			{
-				throw new ArgumentException($"MessageIdIsOverMaxLength ({MaxMessageIdLength}) :  {messageId} ");
-			}
-		}
+        private void ValidateMessageId(string messageId)
+        {
+            if (string.IsNullOrEmpty(messageId))
+            {
+                throw new ArgumentException("MessageIdIsNullOrEmpty");
+            }
+            else if (messageId.Length > MaxMessageIdLength)
+            {
+                throw new ArgumentException($"MessageIdIsOverMaxLength ({MaxMessageIdLength}) :  {messageId} ");
+            }
+        }
     }
 }
