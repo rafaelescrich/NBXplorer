@@ -5,10 +5,11 @@ using System.Text;
 using System.Threading.Tasks;
 using NBXplorer.Models;
 using RabbitMQ.Client;
+using Microsoft.Extensions.Logging;
 
 namespace NBXplorer.MessageBrokers
 {
-    internal class RabbitMqBroker : IBrokerClient
+    public class RabbitMqBroker : IBrokerClient
     {
         private readonly NBXplorerNetworkProvider Networks;
         private readonly ConnectionFactory ConnectionFactory;
@@ -17,57 +18,53 @@ namespace NBXplorer.MessageBrokers
         
         private IConnection Connection;
         private IModel Channel;
+        private readonly ILogger<RabbitMqBroker> _logger;
 
         public RabbitMqBroker(
-            NBXplorerNetworkProvider networks, 
-            string hostName, 
-            string userName, 
-            string password, 
-            string newTransactionExchange, 
-            string newBlockExchange)
+            NBXplorerNetworkProvider networks, ConnectionFactory connectionFactory, 
+            string newTransactionExchange, string newBlockExchange, ILogger<RabbitMqBroker> logger)
         {
             Networks = networks;
+            ConnectionFactory = connectionFactory;
             NewTransactionExchange = newTransactionExchange;
             NewBlockExchange = newBlockExchange;
-
-            ConnectionFactory = new ConnectionFactory()
-            {
-                HostName = hostName,
-                Ssl = new SslOption()
-                {
-                    Enabled = true,
-                    ServerName = hostName
-                },
-                UserName = userName,
-                Password = password
-            };
+            _logger = logger;
         }
 
         private void CheckAndOpenConnection()
         {
-            if (Channel == null)
+            if(Channel == null) 
             {
-                Connection = ConnectionFactory.CreateConnection();
-                Channel = Connection.CreateModel();
+                try
+                {
+                    Connection = ConnectionFactory.CreateConnection();
+                    Channel = Connection.CreateModel();
 
-                if (!string.IsNullOrEmpty(NewTransactionExchange))
-                    Channel.ExchangeDeclare(NewTransactionExchange, ExchangeType.Topic);
-                if (!string.IsNullOrEmpty(NewBlockExchange))
-                    Channel.ExchangeDeclare(NewBlockExchange, ExchangeType.Topic);
+                    if(!string.IsNullOrEmpty(NewTransactionExchange)) 
+                        Channel.ExchangeDeclare(NewTransactionExchange, ExchangeType.Topic);
+                    if(!string.IsNullOrEmpty(NewBlockExchange)) 
+                        Channel.ExchangeDeclare(NewBlockExchange, ExchangeType.Topic);
+
+                    _logger.LogInformation("RabbitMQ connection established successfully.");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError($"Failed to connect to RabbitMQ: {ex.Message}");
+                }
             }
         }
 
-        Task IBrokerClient.Close()
+        public Task Close()
         {
-            if (Connection != null && Connection.IsOpen)
+            if(Connection != null && Connection.IsOpen)
                 Connection.Close();
-            if (Channel != null && Channel.IsOpen)
+            if(Channel != null && Channel.IsOpen)
                 Channel.Close();
 
             return Task.CompletedTask;
         }
 
-        Task IBrokerClient.Send(NewTransactionEvent transactionEvent)
+        public Task Send(NewTransactionEvent transactionEvent)
         {
             CheckAndOpenConnection();
 
@@ -78,7 +75,7 @@ namespace NBXplorer.MessageBrokers
             var routingKey = $"transactions.{transactionEvent.CryptoCode}.{conf}";
             
             string msgIdHash = HashMessageId($"{transactionEvent.TrackedSource}-{transactionEvent.TransactionData.Transaction.GetHash()}-{(transactionEvent.TransactionData.BlockId?.ToString() ?? string.Empty)}");
-            ValidateMessageId(msgIdHash);
+			ValidateMessageId(msgIdHash);
 
             IBasicProperties props = Channel.CreateBasicProperties();
             props.MessageId = msgIdHash;
@@ -95,7 +92,7 @@ namespace NBXplorer.MessageBrokers
             return Task.CompletedTask;
         }
 
-        Task IBrokerClient.Send(NewBlockEvent blockEvent)
+        public Task Send(NewBlockEvent blockEvent)
         {
             CheckAndOpenConnection();
 
@@ -121,23 +118,21 @@ namespace NBXplorer.MessageBrokers
 
         const int MaxMessageIdLength = 128;
         private string HashMessageId(string messageId)
-        {
-            using (var algorithm = SHA256.Create())
-            {
-                return Convert.ToBase64String(algorithm.ComputeHash(Encoding.UTF8.GetBytes(messageId)));
-            }
-        }
+		{
+			HashAlgorithm algorithm = SHA256.Create();
+			return Encoding.UTF8.GetString( algorithm.ComputeHash(Encoding.UTF8.GetBytes(messageId)));
+		}
 
-        private void ValidateMessageId(string messageId)
-        {
-            if (string.IsNullOrEmpty(messageId))
-            {
-                throw new ArgumentException("MessageIdIsNullOrEmpty");
-            }
-            else if (messageId.Length > MaxMessageIdLength)
-            {
-                throw new ArgumentException($"MessageIdIsOverMaxLength ({MaxMessageIdLength}) : {messageId}");
-            }
-        }
+		private void ValidateMessageId(string messageId)
+		{
+			if (string.IsNullOrEmpty(messageId) )
+			{
+				throw new ArgumentException("MessageIdIsNullOrEmpty");
+			}
+			else if (messageId.Length > MaxMessageIdLength)
+			{
+				throw new ArgumentException($"MessageIdIsOverMaxLength ({MaxMessageIdLength}) :  {messageId} ");
+			}
+		}
     }
 }
