@@ -37,6 +37,7 @@ namespace NBXplorer.MessageBrokers
             {
                 try
                 {
+                    _logger.LogInformation("Attempting to connect to RabbitMQ...");
                     Connection = ConnectionFactory.CreateConnection();
                     Channel = Connection.CreateModel();
 
@@ -50,6 +51,7 @@ namespace NBXplorer.MessageBrokers
                 catch (Exception ex)
                 {
                     _logger.LogError($"Failed to connect to RabbitMQ: {ex.Message}");
+                    throw;
                 }
             }
         }
@@ -75,7 +77,7 @@ namespace NBXplorer.MessageBrokers
             var routingKey = $"transactions.{transactionEvent.CryptoCode}.{conf}";
             
             string msgIdHash = HashMessageId($"{transactionEvent.TrackedSource}-{transactionEvent.TransactionData.Transaction.GetHash()}-{(transactionEvent.TransactionData.BlockId?.ToString() ?? string.Empty)}");
-			ValidateMessageId(msgIdHash);
+            ValidateMessageId(msgIdHash);
 
             IBasicProperties props = Channel.CreateBasicProperties();
             props.MessageId = msgIdHash;
@@ -88,6 +90,8 @@ namespace NBXplorer.MessageBrokers
                 routingKey: routingKey,
                 basicProperties: props, 
                 body: body);
+
+            _logger.LogInformation($"Sent transaction event to exchange '{NewTransactionExchange}' with routing key '{routingKey}'.");
 
             return Task.CompletedTask;
         }
@@ -113,26 +117,28 @@ namespace NBXplorer.MessageBrokers
                 basicProperties: props, 
                 body: body);
 
+            _logger.LogInformation($"Sent block event to exchange '{NewBlockExchange}' with routing key '{routingKey}'.");
+
             return Task.CompletedTask;
         }
 
         const int MaxMessageIdLength = 128;
         private string HashMessageId(string messageId)
-		{
-			HashAlgorithm algorithm = SHA256.Create();
-			return Encoding.UTF8.GetString( algorithm.ComputeHash(Encoding.UTF8.GetBytes(messageId)));
-		}
+        {
+            HashAlgorithm algorithm = SHA256.Create();
+            return Encoding.UTF8.GetString(algorithm.ComputeHash(Encoding.UTF8.GetBytes(messageId)));
+        }
 
-		private void ValidateMessageId(string messageId)
-		{
-			if (string.IsNullOrEmpty(messageId) )
-			{
-				throw new ArgumentException("MessageIdIsNullOrEmpty");
-			}
-			else if (messageId.Length > MaxMessageIdLength)
-			{
-				throw new ArgumentException($"MessageIdIsOverMaxLength ({MaxMessageIdLength}) :  {messageId} ");
-			}
-		}
+        private void ValidateMessageId(string messageId)
+        {
+            if (string.IsNullOrEmpty(messageId))
+            {
+                throw new ArgumentException("MessageIdIsNullOrEmpty");
+            }
+            else if (messageId.Length > MaxMessageIdLength)
+            {
+                throw new ArgumentException($"MessageIdIsOverMaxLength ({MaxMessageIdLength}) :  {messageId} ");
+            }
+        }
     }
 }
