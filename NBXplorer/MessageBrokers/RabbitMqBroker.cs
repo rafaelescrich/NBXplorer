@@ -5,7 +5,6 @@ using System.Text;
 using System.Threading.Tasks;
 using NBXplorer.Models;
 using RabbitMQ.Client;
-using RabbitMQ.Client.Exceptions; // Add this for exception handling
 
 namespace NBXplorer.MessageBrokers
 {
@@ -20,58 +19,49 @@ namespace NBXplorer.MessageBrokers
         private IModel Channel;
 
         public RabbitMqBroker(
-            NBXplorerNetworkProvider networks, ConnectionFactory connectionFactory, 
-            string newTransactionExchange, string newBlockExchange)
+            NBXplorerNetworkProvider networks, 
+            string hostName, 
+            string userName, 
+            string password, 
+            string newTransactionExchange, 
+            string newBlockExchange)
         {
             Networks = networks;
-            ConnectionFactory = connectionFactory;
             NewTransactionExchange = newTransactionExchange;
             NewBlockExchange = newBlockExchange;
+
+            ConnectionFactory = new ConnectionFactory()
+            {
+                HostName = hostName,
+                Ssl = new SslOption()
+                {
+                    Enabled = true,
+                    ServerName = hostName
+                },
+                UserName = userName,
+                Password = password
+            };
         }
 
         private void CheckAndOpenConnection()
         {
-            try
+            if (Channel == null)
             {
-                if(Channel == null)
-                {
-                    Connection = ConnectionFactory.CreateConnection();
-                    Channel = Connection.CreateModel();
+                Connection = ConnectionFactory.CreateConnection();
+                Channel = Connection.CreateModel();
 
-                    if(!string.IsNullOrEmpty(NewTransactionExchange)) 
-                        Channel.ExchangeDeclare(NewTransactionExchange, ExchangeType.Topic);
-                    if(!string.IsNullOrEmpty(NewBlockExchange)) 
-                        Channel.ExchangeDeclare(NewBlockExchange, ExchangeType.Topic);
-                }
-            }
-            catch (BrokerUnreachableException ex)
-            {
-                // Handle the case when the RabbitMQ broker is unreachable
-                Console.Error.WriteLine($"Error: Unable to reach RabbitMQ broker. {ex.Message}");
-                // Optionally, you can rethrow the exception or log it to a logging service
-                throw;
-            }
-            catch (ConnectFailureException ex)
-            {
-                // Handle the case when the connection to RabbitMQ fails
-                Console.Error.WriteLine($"Error: Connection to RabbitMQ failed. {ex.Message}");
-                // Optionally, you can rethrow the exception or log it to a logging service
-                throw;
-            }
-            catch (Exception ex)
-            {
-                // Handle any other exceptions
-                Console.Error.WriteLine($"Error: An unexpected error occurred while connecting to RabbitMQ. {ex.Message}");
-                // Optionally, you can rethrow the exception or log it to a logging service
-                throw;
+                if (!string.IsNullOrEmpty(NewTransactionExchange))
+                    Channel.ExchangeDeclare(NewTransactionExchange, ExchangeType.Topic);
+                if (!string.IsNullOrEmpty(NewBlockExchange))
+                    Channel.ExchangeDeclare(NewBlockExchange, ExchangeType.Topic);
             }
         }
 
         Task IBrokerClient.Close()
         {
-            if(Connection != null && Connection.IsOpen)
+            if (Connection != null && Connection.IsOpen)
                 Connection.Close();
-            if(Channel != null && Channel.IsOpen)
+            if (Channel != null && Channel.IsOpen)
                 Channel.Close();
 
             return Task.CompletedTask;
@@ -134,7 +124,7 @@ namespace NBXplorer.MessageBrokers
         {
             using (var algorithm = SHA256.Create())
             {
-                return BitConverter.ToString(algorithm.ComputeHash(Encoding.UTF8.GetBytes(messageId))).Replace("-", "");
+                return Convert.ToBase64String(algorithm.ComputeHash(Encoding.UTF8.GetBytes(messageId)));
             }
         }
 
@@ -146,7 +136,7 @@ namespace NBXplorer.MessageBrokers
             }
             else if (messageId.Length > MaxMessageIdLength)
             {
-                throw new ArgumentException($"MessageIdIsOverMaxLength ({MaxMessageIdLength}) :  {messageId} ");
+                throw new ArgumentException($"MessageIdIsOverMaxLength ({MaxMessageIdLength}) : {messageId}");
             }
         }
     }
