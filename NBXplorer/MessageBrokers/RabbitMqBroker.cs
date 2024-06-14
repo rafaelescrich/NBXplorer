@@ -9,7 +9,7 @@ using Microsoft.Extensions.Logging;
 
 namespace NBXplorer.MessageBrokers
 {
-    public class RabbitMqBroker : IBrokerClient // Changed to public
+    public class RabbitMqBroker : IBrokerClient
     {
         private readonly NBXplorerNetworkProvider Networks;
         private readonly ConnectionFactory ConnectionFactory;
@@ -56,7 +56,7 @@ namespace NBXplorer.MessageBrokers
             }
         }
 
-        Task IBrokerClient.Close()
+        public Task Close()
         {
             if (Connection != null && Connection.IsOpen)
                 Connection.Close();
@@ -66,7 +66,7 @@ namespace NBXplorer.MessageBrokers
             return Task.CompletedTask;
         }
 
-        Task IBrokerClient.Send(NewTransactionEvent transactionEvent)
+        public Task Send(NewTransactionEvent transactionEvent)
         {
             CheckAndOpenConnection();
 
@@ -94,7 +94,7 @@ namespace NBXplorer.MessageBrokers
             return Task.CompletedTask;
         }
 
-        Task IBrokerClient.Send(NewBlockEvent blockEvent)
+        public Task Send(NewBlockEvent blockEvent)
         {
             CheckAndOpenConnection();
 
