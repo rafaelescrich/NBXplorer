@@ -11,11 +11,11 @@ RUN cd NBXplorer && \
 FROM mcr.microsoft.com/dotnet/aspnet:8.0.3-bookworm-slim
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y ca-certificates
+# Copy the application
+COPY --from=builder /app .
 
 RUN mkdir /datadir
 ENV NBXPLORER_DATADIR=/datadir
 VOLUME /datadir
 
-COPY --from=builder "/app" .
 ENTRYPOINT ["dotnet", "NBXplorer.dll"]

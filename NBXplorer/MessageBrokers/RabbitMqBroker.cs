@@ -15,14 +15,16 @@ namespace NBXplorer.MessageBrokers
         private readonly ConnectionFactory ConnectionFactory;
         private readonly string NewTransactionExchange;
         private readonly string NewBlockExchange;
-        
         private IConnection Connection;
         private IModel Channel;
         private readonly ILogger<RabbitMqBroker> _logger;
 
         public RabbitMqBroker(
-            NBXplorerNetworkProvider networks, ConnectionFactory connectionFactory, 
-            string newTransactionExchange, string newBlockExchange, ILogger<RabbitMqBroker> logger)
+            NBXplorerNetworkProvider networks, 
+            ConnectionFactory connectionFactory, 
+            string newTransactionExchange, 
+            string newBlockExchange,
+            ILogger<RabbitMqBroker> logger)
         {
             Networks = networks;
             ConnectionFactory = connectionFactory;
@@ -33,49 +35,47 @@ namespace NBXplorer.MessageBrokers
 
         private void CheckAndOpenConnection()
         {
-            if(Channel == null) 
+            try
             {
-                try
+                if (Channel == null)
                 {
-                    _logger.LogInformation("Attempting to connect to RabbitMQ...");
                     Connection = ConnectionFactory.CreateConnection();
                     Channel = Connection.CreateModel();
 
-                    if(!string.IsNullOrEmpty(NewTransactionExchange)) 
-                        Channel.ExchangeDeclare(NewTransactionExchange, ExchangeType.Topic);
-                    if(!string.IsNullOrEmpty(NewBlockExchange)) 
-                        Channel.ExchangeDeclare(NewBlockExchange, ExchangeType.Topic);
+                    if (!string.IsNullOrEmpty(NewTransactionExchange))
+                        Channel.ExchangeDeclare(NewTransactionExchange, ExchangeType.Topic, durable: true); // Set durable to true
+                    if (!string.IsNullOrEmpty(NewBlockExchange))
+                        Channel.ExchangeDeclare(NewBlockExchange, ExchangeType.Topic, durable: true); // Set durable to true
 
                     _logger.LogInformation("RabbitMQ connection established successfully.");
                 }
-                catch (Exception ex)
-                {
-                    _logger.LogError($"Failed to connect to RabbitMQ: {ex.Message}");
-                    throw;
-                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Error connecting to RabbitMQ: {ex.Message}");
             }
         }
 
-        public Task Close()
+        Task IBrokerClient.Close()
         {
-            if(Connection != null && Connection.IsOpen)
+            if (Connection != null && Connection.IsOpen)
                 Connection.Close();
-            if(Channel != null && Channel.IsOpen)
+            if (Channel != null && Channel.IsOpen)
                 Channel.Close();
 
             return Task.CompletedTask;
         }
 
-        public Task Send(NewTransactionEvent transactionEvent)
+        Task IBrokerClient.Send(NewTransactionEvent transactionEvent)
         {
             CheckAndOpenConnection();
 
             string jsonMsg = transactionEvent.ToJson(Networks.GetFromCryptoCode(transactionEvent.CryptoCode).JsonSerializerSettings);
             var body = Encoding.UTF8.GetBytes(jsonMsg);
-            
+
             var conf = (transactionEvent.BlockId == null ? "unconfirmed" : "confirmed");
             var routingKey = $"transactions.{transactionEvent.CryptoCode}.{conf}";
-            
+
             string msgIdHash = HashMessageId($"{transactionEvent.TrackedSource}-{transactionEvent.TransactionData.Transaction.GetHash()}-{(transactionEvent.TransactionData.BlockId?.ToString() ?? string.Empty)}");
             ValidateMessageId(msgIdHash);
 
@@ -86,17 +86,15 @@ namespace NBXplorer.MessageBrokers
             props.Headers.Add("CryptoCode", transactionEvent.CryptoCode);
 
             Channel.BasicPublish(
-                exchange: NewTransactionExchange, 
+                exchange: NewTransactionExchange,
                 routingKey: routingKey,
-                basicProperties: props, 
+                basicProperties: props,
                 body: body);
-
-            _logger.LogInformation($"Sent transaction event to exchange '{NewTransactionExchange}' with routing key '{routingKey}'.");
 
             return Task.CompletedTask;
         }
 
-        public Task Send(NewBlockEvent blockEvent)
+        Task IBrokerClient.Send(NewBlockEvent blockEvent)
         {
             CheckAndOpenConnection();
 
@@ -104,7 +102,7 @@ namespace NBXplorer.MessageBrokers
             var body = Encoding.UTF8.GetBytes(jsonMsg);
 
             var routingKey = $"blocks.{blockEvent.CryptoCode}";
-            
+
             IBasicProperties props = Channel.CreateBasicProperties();
             props.MessageId = blockEvent.Hash.ToString();
             props.ContentType = typeof(NewBlockEvent).ToString();
@@ -112,12 +110,10 @@ namespace NBXplorer.MessageBrokers
             props.Headers.Add("CryptoCode", blockEvent.CryptoCode);
 
             Channel.BasicPublish(
-                exchange: NewBlockExchange, 
+                exchange: NewBlockExchange,
                 routingKey: routingKey,
-                basicProperties: props, 
+                basicProperties: props,
                 body: body);
-
-            _logger.LogInformation($"Sent block event to exchange '{NewBlockExchange}' with routing key '{routingKey}'.");
 
             return Task.CompletedTask;
         }
