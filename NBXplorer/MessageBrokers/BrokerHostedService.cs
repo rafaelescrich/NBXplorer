@@ -1,34 +1,39 @@
-﻿using Microsoft.Azure.ServiceBus;
-using Microsoft.Extensions.Hosting;
+﻿using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.Azure.ServiceBus;
 using NBXplorer.Configuration;
 using RabbitMQ.Client;
 using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Extensions.Logging;
 
 namespace NBXplorer.MessageBrokers
 {
     public class BrokerHostedService : IHostedService
     {
-        EventAggregator _EventAggregator;
-        bool _Disposed = false;
-        CompositeDisposable _subscriptions = new CompositeDisposable();
-        IBrokerClient _senderBlock = null;
-        IBrokerClient _senderTransactions = null;
-        ExplorerConfiguration _config;
+        private readonly EventAggregator _EventAggregator;
+        private bool _Disposed = false;
+        private readonly CompositeDisposable _subscriptions = new CompositeDisposable();
+        private IBrokerClient _senderBlock = null;
+        private IBrokerClient _senderTransactions = null;
+        private readonly ExplorerConfiguration _config;
         private readonly ILogger<BrokerHostedService> _logger;
-        private readonly ILogger<RabbitMqBroker> _rabbitMqLogger;
+        private readonly ILogger<RabbitMqBroker> _rabbitLogger;
 
-        public BrokerHostedService(EventAggregator eventAggregator, IOptions<ExplorerConfiguration> config, NBXplorerNetworkProvider networks, ILogger<BrokerHostedService> logger, ILogger<RabbitMqBroker> rabbitMqLogger)
+        public BrokerHostedService(
+            EventAggregator eventAggregator,
+            IOptions<ExplorerConfiguration> config,
+            NBXplorerNetworkProvider networks,
+            ILogger<BrokerHostedService> logger,
+            ILogger<RabbitMqBroker> rabbitLogger) // Ensure this is public
         {
             _EventAggregator = eventAggregator;
             Networks = networks;
             _config = config.Value;
             _logger = logger;
-            _rabbitMqLogger = rabbitMqLogger;
+            _rabbitLogger = rabbitLogger;
         }
 
         public Task StartAsync(CancellationToken cancellationToken)
@@ -48,7 +53,6 @@ namespace NBXplorer.MessageBrokers
             {
                 await _senderTransactions.Send(o);
             }));
-
             return Task.CompletedTask;
         }
 
@@ -62,11 +66,11 @@ namespace NBXplorer.MessageBrokers
                 if (!string.IsNullOrWhiteSpace(_config.AzureServiceBusTransactionTopic))
                     brokers.Add(CreateAzureTopic(_config.AzureServiceBusConnectionString, _config.AzureServiceBusTransactionTopic));
             }
-            if(!string.IsNullOrEmpty(_config.RabbitMqHostName) && 
+            if (!string.IsNullOrEmpty(_config.RabbitMqHostName) && 
                 !string.IsNullOrEmpty(_config.RabbitMqUsername) && 
                 !string.IsNullOrEmpty(_config.RabbitMqPassword)) 
             {
-                if(!string.IsNullOrEmpty(_config.RabbitMqTransactionExchange)) 
+                if (!string.IsNullOrEmpty(_config.RabbitMqTransactionExchange)) 
                 {
                     brokers.Add(CreateRabbitMqExchange(
                         hostName: _config.RabbitMqHostName,
@@ -91,11 +95,11 @@ namespace NBXplorer.MessageBrokers
                     brokers.Add(CreateAzureTopic(_config.AzureServiceBusConnectionString, _config.AzureServiceBusBlockTopic));
             }
 
-            if(!string.IsNullOrEmpty(_config.RabbitMqHostName) && 
+            if (!string.IsNullOrEmpty(_config.RabbitMqHostName) && 
                 !string.IsNullOrEmpty(_config.RabbitMqUsername) && 
                 !string.IsNullOrEmpty(_config.RabbitMqPassword)) 
             {
-                if(!string.IsNullOrEmpty(_config.RabbitMqBlockExchange)) 
+                if (!string.IsNullOrEmpty(_config.RabbitMqBlockExchange)) 
                 {
                     brokers.Add(CreateRabbitMqExchange(
                         hostName: _config.RabbitMqHostName,
@@ -128,13 +132,9 @@ namespace NBXplorer.MessageBrokers
                 Networks,
                 new ConnectionFactory() { 
                     HostName = hostName, VirtualHost = virtualHost,
-                    UserName = username, Password = password, 
-                    Ssl = new SslOption() {
-                        Enabled = true,
-                        ServerName = hostName
-                    }
-                }, 
-                newTransactionExchange, newBlockExchange, _rabbitMqLogger);
+                    UserName = username, Password = password }, 
+                newTransactionExchange, newBlockExchange,
+                _rabbitLogger); // Pass the logger
         }
 
         public async Task StopAsync(CancellationToken cancellationToken)
@@ -145,6 +145,7 @@ namespace NBXplorer.MessageBrokers
             _subscriptions.Dispose();
             await Task.WhenAll(_senderBlock.Close(), _senderTransactions.Close());
         }
+
         public NBXplorerNetworkProvider Networks { get; }
     }
 }

@@ -9,7 +9,7 @@ using Microsoft.Extensions.Logging;
 
 namespace NBXplorer.MessageBrokers
 {
-    public class RabbitMqBroker : IBrokerClient
+    public class RabbitMqBroker : IBrokerClient // Changed to public
     {
         private readonly NBXplorerNetworkProvider Networks;
         private readonly ConnectionFactory ConnectionFactory;
@@ -43,9 +43,9 @@ namespace NBXplorer.MessageBrokers
                     Channel = Connection.CreateModel();
 
                     if (!string.IsNullOrEmpty(NewTransactionExchange))
-                        Channel.ExchangeDeclare(NewTransactionExchange, ExchangeType.Topic, durable: true); // Set durable to true
+                        Channel.ExchangeDeclare(NewTransactionExchange, ExchangeType.Topic, durable: true);
                     if (!string.IsNullOrEmpty(NewBlockExchange))
-                        Channel.ExchangeDeclare(NewBlockExchange, ExchangeType.Topic, durable: true); // Set durable to true
+                        Channel.ExchangeDeclare(NewBlockExchange, ExchangeType.Topic, durable: true);
 
                     _logger.LogInformation("RabbitMQ connection established successfully.");
                 }
