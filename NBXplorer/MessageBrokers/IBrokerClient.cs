@@ -1,11 +1,12 @@
 ﻿using System.Threading.Tasks;
+using NBXplorer.Models;
 
 namespace NBXplorer.MessageBrokers
 {
     public interface IBrokerClient
     {
-		Task Send(Models.NewTransactionEvent transactionEvent);
-		Task Send(Models.NewBlockEvent blockEvent);
-		Task Close();
-	}
+        Task Send(NewTransactionEvent transactionEvent);
+        Task Send(NewBlockEvent blockEvent);
+        Task Close();
+    }
 }

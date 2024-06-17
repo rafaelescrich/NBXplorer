@@ -1,150 +1,53 @@
-﻿using Microsoft.Azure.ServiceBus;
+﻿using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NBXplorer.Configuration;
+using NBXplorer.Events;
+using NBXplorer.Models;
 using RabbitMQ.Client;
-using System;
-using System.Collections.Generic;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace NBXplorer.MessageBrokers
 {
     public class BrokerHostedService : IHostedService
     {
-        EventAggregator _EventAggregator;
-        bool _Disposed = false;
-        CompositeDisposable _subscriptions = new CompositeDisposable();
-        IBrokerClient _senderBlock = null;
-        IBrokerClient _senderTransactions = null;
-        ExplorerConfiguration _config;
+        private readonly EventAggregator _eventAggregator;
+        private readonly IOptions<ExplorerConfiguration> _options;
+        private readonly NBXplorerNetworkProvider _networkProvider;
         private readonly ILogger<BrokerHostedService> _logger;
-        private readonly ILogger<RabbitMqBroker> _rabbitMqLogger;
+        private readonly IBrokerClient _brokerClient;
 
         public BrokerHostedService(
-            EventAggregator eventAggregator, 
-            IOptions<ExplorerConfiguration> config, 
-            NBXplorerNetworkProvider networks, 
+            EventAggregator eventAggregator,
+            IOptions<ExplorerConfiguration> options,
+            NBXplorerNetworkProvider networkProvider,
             ILogger<BrokerHostedService> logger,
             ILogger<RabbitMqBroker> rabbitMqLogger)
         {
-            _EventAggregator = eventAggregator;
-            Networks = networks;
-            _config = config.Value;
+            _eventAggregator = eventAggregator;
+            _options = options;
+            _networkProvider = networkProvider;
             _logger = logger;
-            _rabbitMqLogger = rabbitMqLogger;
+            _brokerClient = new RabbitMqBroker(networkProvider, new ConnectionFactory
+            {
+                HostName = options.Value.RabbitMqHostName,
+                VirtualHost = options.Value.RabbitMqVirtualHost,
+                UserName = options.Value.RabbitMqUsername,
+                Password = options.Value.RabbitMqPassword
+            }, options.Value.RabbitMqTransactionExchange, options.Value.RabbitMqBlockExchange, rabbitMqLogger);
         }
 
         public Task StartAsync(CancellationToken cancellationToken)
         {
-            if (_Disposed)
-                throw new ObjectDisposedException(nameof(BrokerHostedService));
-
-            _senderBlock = CreateClientBlock();
-            _senderTransactions = CreateClientTransaction();
-
-            _subscriptions.Add(_EventAggregator.Subscribe<Models.NewBlockEvent>(async o =>
-            {
-                await _senderBlock.Send(o);
-            }));
-
-            _subscriptions.Add(_EventAggregator.Subscribe<Models.NewTransactionEvent>(async o =>
-            {
-                await _senderTransactions.Send(o);
-            }));
-
+            _eventAggregator.Subscribe<NewTransactionEvent>(async e => await _brokerClient.Send(e));
+            _eventAggregator.Subscribe<NewBlockEvent>(async e => await _brokerClient.Send(e));
             return Task.CompletedTask;
         }
 
-        IBrokerClient CreateClientTransaction()
+        public Task StopAsync(CancellationToken cancellationToken)
         {
-            var brokers = new List<IBrokerClient>();
-            if (!string.IsNullOrEmpty(_config.AzureServiceBusConnectionString))
-            {
-                if (!string.IsNullOrWhiteSpace(_config.AzureServiceBusTransactionQueue))
-                    brokers.Add(CreateAzureQueue(_config.AzureServiceBusConnectionString, _config.AzureServiceBusTransactionQueue));
-                if (!string.IsNullOrWhiteSpace(_config.AzureServiceBusTransactionTopic))
-                    brokers.Add(CreateAzureTopic(_config.AzureServiceBusConnectionString, _config.AzureServiceBusTransactionTopic));
-            }
-            if(!string.IsNullOrEmpty(_config.RabbitMqHostName) && 
-                !string.IsNullOrEmpty(_config.RabbitMqUsername) && 
-                !string.IsNullOrEmpty(_config.RabbitMqPassword)) 
-            {
-                if(!string.IsNullOrEmpty(_config.RabbitMqTransactionExchange)) 
-                {
-                    brokers.Add(CreateRabbitMqExchange(
-                        hostName: _config.RabbitMqHostName,
-                        virtualHost: _config.RabbitMqVirtualHost,
-                        username: _config.RabbitMqUsername,
-                        password: _config.RabbitMqPassword,
-                        newTransactionExchange: _config.RabbitMqTransactionExchange,
-                        newBlockExchange: string.Empty));
-                }
-            }
-            return new CompositeBroker(brokers);
+            return _brokerClient.Close();
         }
-
-        IBrokerClient CreateClientBlock()
-        {
-            var brokers = new List<IBrokerClient>();
-            if (!string.IsNullOrEmpty(_config.AzureServiceBusConnectionString))
-            {
-                if (!string.IsNullOrWhiteSpace(_config.AzureServiceBusBlockQueue))
-                    brokers.Add(CreateAzureQueue(_config.AzureServiceBusConnectionString, _config.AzureServiceBusBlockQueue));
-                if (!string.IsNullOrWhiteSpace(_config.AzureServiceBusBlockTopic))
-                    brokers.Add(CreateAzureTopic(_config.AzureServiceBusConnectionString, _config.AzureServiceBusBlockTopic));
-            }
-
-            if(!string.IsNullOrEmpty(_config.RabbitMqHostName) && 
-                !string.IsNullOrWhiteSpace(_config.RabbitMqUsername) && 
-                !string.IsNullOrWhiteSpace(_config.RabbitMqPassword)) 
-            {
-                if(!string.IsNullOrEmpty(_config.RabbitMqBlockExchange)) 
-                {
-                    brokers.Add(CreateRabbitMqExchange(
-                        hostName: _config.RabbitMqHostName,
-                        virtualHost: _config.RabbitMqVirtualHost,
-                        username: _config.RabbitMqUsername,
-                        password: _config.RabbitMqPassword,
-                        newTransactionExchange: string.Empty,
-                        newBlockExchange: _config.RabbitMqBlockExchange));
-                }
-            }
-            return new CompositeBroker(brokers);
-        }
-
-        private IBrokerClient CreateAzureQueue(string connnectionString, string queueName)
-        {
-            return new AzureBroker(new QueueClient(connnectionString, queueName), Networks);
-        }
-
-        private IBrokerClient CreateAzureTopic(string connectionString, string topicName)
-        {
-            return new AzureBroker(new TopicClient(connectionString, topicName), Networks);
-        }
-
-        private IBrokerClient CreateRabbitMqExchange(
-            string hostName, string virtualHost, 
-            string username, string password, 
-            string newTransactionExchange, string newBlockExchange)
-        {
-            return new RabbitMqBroker(
-                Networks,
-                new ConnectionFactory() { 
-                    HostName = hostName, VirtualHost = virtualHost,
-                    UserName = username, Password = password }, 
-                newTransactionExchange, newBlockExchange, _rabbitMqLogger);
-        }
-
-        public async Task StopAsync(CancellationToken cancellationToken)
-        {
-            if (_senderBlock is null)
-                return;
-            _Disposed = true;
-            _subscriptions.Dispose();
-            await Task.WhenAll(_senderBlock.Close(), _senderTransactions.Close());
-        }
-        public NBXplorerNetworkProvider Networks { get; }
     }
 }
